@@ -3,7 +3,7 @@ import logging
 import torch
 import pandas as pd
 from sklearn.model_selection import train_test_split
-from tabkanet.models import BasicNet ,BasicNetKAN,TabularTransformer,TabKANet
+from tabkanet.models import BasicNet ,BasicNetKAN,TabularTransformer,TabKANet,FeatureTokenizerTransformer,TabMLPNet
 import argparse
 CUDA_LAUNCH_BLOCKING=1
 from tabkanet.metrics import f1_score_macro,auc_score
@@ -14,8 +14,9 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 parser = argparse.ArgumentParser()
 
 parser.add_argument('--fold', default="1",type=str)
-parser.add_argument('--dataset', default="bankmarketing",type=str, help="choose from  [ bankmarketing    onlineshoper]")
-parser.add_argument('--modelname',default="tabtransformer", type=str, help="choose from  [BasicNet tabtransformer kan tabkanet")
+parser.add_argument('--dataset', default="credit",type=str, help="choose from  [  bankmarketing  onlineshoper seismic credit  biodeg]")
+parser.add_argument('--modelname',default="tabmlpnet", type=str, help="choose from")
+parser.add_argument('--noise',default=True, type=bool)
 parser.add_argument('--gpunum',default=0, type=int)
 parser.add_argument('--dim',default=64, type=int)
 parser.add_argument('--batch',default=128, type=int)
@@ -24,13 +25,10 @@ args = parser.parse_args()
 
 fold=args.fold
 batch_size = args.batch
-inference_batch_size = 128
-epochs = 30
+inference_batch_size = 32
+epochs = 10
 early_stopping_patience = 50
 seed = 0
-
-
-
 
 if args.modelname=="BasicNet":
     model_object =  BasicNet 
@@ -38,14 +36,18 @@ elif args.modelname=="tabtransformer":
     model_object =  TabularTransformer 
 elif args.modelname=="kan":
     model_object =  BasicNetKAN 
+elif args.modelname=="FeatureTokenizerTransformer":
+    model_object =  FeatureTokenizerTransformer 
+elif args.modelname=="tabmlpnet":
+    model_object =  TabMLPNet 
 elif args.modelname=="tabkanet":
     model_object =  TabKANet 
-
 
 print(fold)
 print(args.modelname)
 print(args.dataset)
 print(args.batch)
+print("Noise:"+str(args.noise))
 
 
 output_dim = 2
@@ -61,10 +63,47 @@ custom_metric = f1_score_macro
 maximize = False
 criterion = torch.nn.CrossEntropyLoss()
 
+learninable_noise=args.noise
 
 
 
-if args.dataset=="onlineshoper":
+
+
+
+
+
+
+
+if args.dataset=="credit":
+
+    target_name = 'Output'
+    task = 'classification'
+    continuous_features = ['tab2','tab5','tab8','tab11','tab13']
+    categorical_features = [ 'tab1','tab3','tab4','tab6','tab7','tab9','tab10','tab12','tab14','tab15','tab16','tab17','tab18','tab19','tab20']
+    key="credit-g"
+
+
+elif args.dataset=="biodeg":
+
+
+    target_name = 'Output'
+    task = 'classification'
+    continuous_features = ['tab1', 'tab2', 'tab8', 'tab12', 'tab13', 'tab14', 'tab15', 'tab17', 'tab18', 'tab22', 'tab27', 'tab28', 'tab30', 'tab31', 'tab36', 'tab37', 'tab39']
+    categorical_features = [  'tab38', 'tab32', 'tab33', 'tab34', 'tab35', 'tab29', 'tab3', 'tab4', 'tab5', 'tab6', 'tab7', 'tab9', 'tab10', 'tab11', 'tab16', 'tab19', 'tab20', 'tab21', 'tab23', 'tab24', 'tab25', 'tab26', 'tab40', 'tab41']
+    key="biodeg"
+
+elif args.dataset=="seismic":
+
+    target_name = 'Output'
+    task = 'classification'
+    continuous_features = [ 'genergy', 'gpuls', 'gdenergy', 'gdpuls']
+    categorical_features = [ 'seismic', 'seismoacoustic', 'shift', 'ghazard', 'nbumps', 'nbumps2', 'nbumps3', 'nbumps4', 'nbumps5', 'nbumps6', 'nbumps7', 'nbumps89', 'energy', 'maxenergy' ]
+    key = "seismic-bumps"
+
+
+
+
+elif args.dataset=="onlineshoper":
 
     target_name = 'Revenue'
     task = 'classification'
@@ -73,7 +112,21 @@ if args.dataset=="onlineshoper":
     key="onlineshoper"
 
 
+elif args.dataset=="blastchar":
+    target_name = 'Churn'
+    task = 'classification'
+    categorical_features = ['gender','SeniorCitizen','Partner','Dependents','PhoneService','MultipleLines','InternetService','OnlineSecurity','OnlineBackup','DeviceProtection','TechSupport','StreamingTV','StreamingMovies','Contract','PaperlessBilling','PaymentMethod']
+    continuous_features = ['tenure','MonthlyCharges','TotalCharges']
+    key ="blastchar"
+
+
+
+
+
+
 elif args.dataset=="bankmarketing":
+
+
     target_name = 'Output'
     task = 'classification'
     continuous_features = ['age',  'balance',  'duration', 'campaign', 'pdays', 'previous']
@@ -82,9 +135,10 @@ elif args.dataset=="bankmarketing":
 
 
 
-save_model_path='/path/templates/'+key+'/Fold'+fold+'/'+args.modelname+'.pth'
 
-if args.modelname=="tabkanet" :
+
+
+if args.modelname=="tabkanet" or args.modelname=="tabmlpnet" :
     all_count=len(continuous_features)+len(categorical_features)
     if all_count<=10:
         mlp_hidden_dims = [32]
@@ -92,6 +146,7 @@ if args.modelname=="tabkanet" :
         mlp_hidden_dims = [256,32]
     else:
         mlp_hidden_dims = [512,32]
+
 
 
 
@@ -103,12 +158,19 @@ def train_model():
 
 
 
-    train_data = pd.read_csv('/path/templates/'+key+'/Fold'+fold+'/train.csv').fillna('EMPTY')
+    train_data = pd.read_csv('/data/gaowh/work/24process/tab-transformer/use_tabtransformers/templates/'+key+'/Fold'+fold+'/train.csv').fillna('EMPTY')
 
-    test_data = pd.read_csv('/path/templates/'+key+'/Fold'+fold+'/test.csv').fillna('EMPTY')
+    test_data = pd.read_csv('/data/gaowh/work/24process/tab-transformer/use_tabtransformers/templates/'+key+'/Fold'+fold+'/test.csv').fillna('EMPTY')
 
-    val_data = pd.read_csv('/path/templates/'+key+'/Fold'+fold+'/val.csv').fillna('EMPTY')
+    val_data = pd.read_csv('/data/gaowh/work/24process/tab-transformer/use_tabtransformers/templates/'+key+'/Fold'+fold+'/val.csv').fillna('EMPTY')
 
+    if args.modelname=="FeatureTokenizerTransformer" :
+        for feature in continuous_features:
+            mean = train_data[feature].mean()
+            std = train_data[feature].std()
+            train_data[feature] = (train_data[feature] - mean) / std
+            test_data[feature] = (test_data[feature] - mean) / std
+            val_data[feature] = (val_data[feature] - mean) / std
 
 
     train_dataset, test_dataset, val_dataset = \
@@ -153,15 +215,59 @@ def train_model():
         final_vocabulary[column] = {value: i for i, value in enumerate(unique_values)}
 
 
+    def get_quantile_bins(x_cont, n_bins=4):
+        if x_cont.ndim != 2:
+            raise ValueError("x_cont must be a 2D tensor")
+        
+        # 获取特征数量
+        feature_dim = x_cont.shape[1]
+        
+        # 初始化边界列表
+        bins = torch.zeros(feature_dim, n_bins + 1, device=x_cont.device)
+        
+        # 计算每个特征的分位数
+        for i in range(feature_dim):
+            # 计算分位数，返回值是升序排列的
+            quantiles = torch.quantile(x_cont[:, i], torch.linspace(0, 1, n_bins + 1, device=x_cont.device), dim=0)
+            bins[i] = quantiles
+        
+        return bins
 
-    model = model_object(
-        output_dim=output_dim, 
-        vocabulary=final_vocabulary,
-        num_continuous_features=len(continuous_features), 
-        embedding_dim=embedding_dim, nhead=nhead, num_layers=num_layers, dim_feedforward=dim_feedforward, attn_dropout_rate=attn_dropout_rate,
-        mlp_hidden_dims=mlp_hidden_dims, activation=activation, ffn_dropout_rate=ffn_dropout_rate
-        )
 
+
+    if args.modelname=="tabkanet"  or args.modelname=="tabmlpnet"  :
+
+        device = torch.device("cuda:"+str(args.gpunum) if torch.cuda.is_available() else "cpu")
+
+        data_numpy = {
+            'train': {'x_cont': train_dataset.continuous_data},
+        }
+        data = {
+            part: {k: torch.as_tensor(v, device=device).float() for k, v in data_numpy[part].items()}
+            for part in data_numpy
+        }
+
+
+        bins = get_quantile_bins(data['train']['x_cont'], n_bins=4)
+
+
+        model = model_object(
+            output_dim=output_dim, 
+            vocabulary=final_vocabulary,
+            num_continuous_features=len(continuous_features), 
+            embedding_dim=embedding_dim, nhead=nhead, num_layers=num_layers, dim_feedforward=dim_feedforward, attn_dropout_rate=attn_dropout_rate,
+            mlp_hidden_dims=mlp_hidden_dims, activation=activation, ffn_dropout_rate=ffn_dropout_rate,learninable_noise=learninable_noise,bins=bins
+            )
+    else:
+        
+        model = model_object(
+            output_dim=output_dim, 
+            vocabulary=final_vocabulary,
+            num_continuous_features=len(continuous_features), 
+            embedding_dim=embedding_dim, nhead=nhead, num_layers=num_layers, dim_feedforward=dim_feedforward, attn_dropout_rate=attn_dropout_rate,
+            mlp_hidden_dims=mlp_hidden_dims, activation=activation, ffn_dropout_rate=ffn_dropout_rate
+            )
+        
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-2)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max' if maximize else 'min', factor=0.1, patience=10)
     

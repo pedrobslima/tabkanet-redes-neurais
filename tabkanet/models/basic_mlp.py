@@ -8,51 +8,6 @@ import math
 
 
 
-class CatEncoder(nn.Module):
-    def __init__(self, 
-                 vocabulary: Dict[str, Dict[str, int]],
-                 embedding_dim: int, nhead: int, num_layers: int, dim_feedforward: int, 
-                 dropout_rate: float):
-        """
-        Categorical feature encoder.
-
-        Parameters:
-        - vocabulary (Dict[str, Dict[str, int]]): Vocabulary of categorical features
-        - embedding_dim (int): Embedding dimension.
-        - nhead (int): Number of attention heads.
-        - num_layers (int): Number of transformer layers.
-        - dim_feedforward (int): Dimension of the feedforward network model.
-        - dropout_rate (float): Dropout rate.
-        """
-        super(CatEncoder, self).__init__()
-        self.vocabulary = vocabulary
-        self.model = nn.ModuleDict({
-            'column_embedding_layer': ColumnEmbedding(vocabulary, embedding_dim)})
-        self.fc1 = nn.Linear( embedding_dim* len(vocabulary) , embedding_dim* len(vocabulary))  
-
-
-    def forward(self, x: torch.Tensor):
-        batch_size = x.size(0)
-        x = [self.model['column_embedding_layer'](x[:, i], col) for i, col in enumerate(self.vocabulary)]
-        x = torch.stack(x, dim=1)
-        x = x.view(x.size(0), -1)  
-        x = F.relu(self.fc1(x))  
-        return x
-
-class NumEncoder(nn.Module):
-    def __init__(self, num_features: int):
-        """
-        Continuous feature encoder.
-
-        Parameters:
-        - num_features (int): Number of continuous features.
-        """
-        super(NumEncoder, self).__init__()
-        self.norm = nn.LayerNorm([num_features])
-        
-    def forward(self, x: torch.Tensor):
-        return self.norm(x)
-
 
 class MLPBlock(nn.Module):
     def __init__(self, input_dim: int, output_dim: int, 
@@ -108,23 +63,18 @@ class BasicNet(nn.Module):
     def __init__(self, 
                  output_dim: int, vocabulary: Dict[str, Dict[str, int]], num_continuous_features: int,
                  embedding_dim: int, nhead: int, num_layers: int, dim_feedforward: int, attn_dropout_rate: float,
-                 mlp_hidden_dims: List[int], activation: str, ffn_dropout_rate: float):
+                 mlp_hidden_dims: List[int], activation: str, ffn_dropout_rate: float,learninable_noise:bool, geoaffine:bool):
         super(BasicNet, self).__init__()
-        self.encoders = nn.ModuleDict({
-            'categorical_feature_encoder': CatEncoder(vocabulary, embedding_dim, nhead, num_layers, dim_feedforward, attn_dropout_rate),
-            'continuous_feature_encoder': NumEncoder(num_continuous_features),
-        })
-        self.classifier = MLP(embedding_dim * len(vocabulary) + num_continuous_features, output_dim, mlp_hidden_dims, activation, ffn_dropout_rate)
+        self.classifier = MLP( len(vocabulary) + num_continuous_features, output_dim, mlp_hidden_dims, activation, ffn_dropout_rate)
         self.cat_count=len(vocabulary)
+        self.norm = nn.LayerNorm([num_continuous_features])
 
     def forward(self, categorical_x: torch.Tensor, continuous_x: torch.Tensor):
+        continuous_x=self.norm(continuous_x)
+
         if self.cat_count==0:
-            continuous_x = self.encoders['continuous_feature_encoder'](continuous_x)
-            x = torch.cat([categorical_x, continuous_x], dim=-1)            
-            x = self.classifier(x)
+            x = self.classifier(continuous_x)
         else:
-            categorical_x = self.encoders['categorical_feature_encoder'](categorical_x)
-            continuous_x = self.encoders['continuous_feature_encoder'](continuous_x)
             x = torch.cat([categorical_x, continuous_x], dim=-1)
             x = self.classifier(x)
         return x

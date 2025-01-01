@@ -2,7 +2,7 @@ import sys
 sys.path.append('../') 
 import logging
 import torch
-from tabkanet.models import BasicNet ,BasicNetKAN,TabularTransformer,TabKANet
+from tabkanet.models import BasicNet ,BasicNetKAN,TabularTransformer,TabKANet,FeatureTokenizerTransformer,TabMLPNet
 import pandas as pd
 from tabkanet.metrics import root_mean_squared_logarithmic_error,root_mean_squared_error
 from tabkanet.tools_regression import seed_everything, train, get_data, get_dataset, get_data_loader
@@ -10,14 +10,12 @@ import argparse
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
-
-
 parser = argparse.ArgumentParser()
 parser.add_argument('--fold', default="1",type=str)
-parser.add_argument('--dataset', default="cpu_small",type=str, help="choose from  [baseball cahouse  cpu_small]")
-parser.add_argument('--modelname',default="BasicNet", type=str, help="choose from  [BasicNet tabtransformer kan tabkanet")
+parser.add_argument('--dataset', default="sarcos",type=str, help="choose from  [sarcos  baseball cahouse ]")
+parser.add_argument('--modelname',default="FeatureTokenizerTransformer", type=str, help="choose from  [BasicNet tabtransformer kan tabkanet")
+parser.add_argument('--noise',default=False, type=bool)
 parser.add_argument('--gpunum',default=0, type=int)
-
 args = parser.parse_args()
 
 fold=args.fold
@@ -39,18 +37,30 @@ elif args.modelname=="kan":
 elif args.modelname=="tabkanet":
     model_object =  TabKANet
 
+elif args.modelname=="FeatureTokenizerTransformer":
+    model_object =  FeatureTokenizerTransformer 
+
+
+elif args.modelname=="tabmlpnet":
+    model_object =  TabMLPNet 
+
+
+
 print(fold)
 print(args.modelname)
 print(args.dataset)
+print("Noise:"+str(args.noise))
 
-batch_size = 64
+
+
+batch_size = 128
 inference_batch_size = 128
-epochs = 300
-early_stopping_patience = 100
+epochs = 150
+early_stopping_patience = 50
 early_stopping_start_from = 200
 seed = 0
 output_dim = 1
-embedding_dim = 32
+embedding_dim = 16
 nhead = 8
 num_layers = 3
 dim_feedforward = 8
@@ -63,10 +73,15 @@ maximize = False
 criterion = torch.nn.MSELoss()
 attn_dropout_rate = 0.1
 ffn_dropout_rate = 0.1
+learninable_noise=args.noise
+
+
 
 
 
 if args.dataset=="cahouse":
+
+
     target_name = 'Output'
     task = 'regression'
     continuous_features = [  'longitude', 'latitude', 'housing_median_age', 'total_rooms', 'total_bedrooms', 'population', 'households', 'median_income']
@@ -75,6 +90,7 @@ if args.dataset=="cahouse":
 
 
 elif args.dataset=="sarcos":
+
     target_name = 'V22'
     task = 'regression'
     continuous_features = ['V1', 'V2', 'V3', 'V4', 'V5', 'V6', 'V7', 'V8', 'V9', 'V10', 'V11', 'V12', 'V13', 'V14', 'V15', 'V16', 'V17', 'V18', 'V19', 'V20', 'V21', 'V23', 'V24', 'V25', 'V26', 'V27', 'V28']
@@ -83,6 +99,7 @@ elif args.dataset=="sarcos":
  
 
 elif args.dataset=="cpu_small":
+
     target_name = 'usr'
     task = 'regression'
     continuous_features = ['lread', 'lwrite', 'scall', 'sread', 'swrite', 'fork', 'exec', 'rchar', 'wchar', 'runqsz', 'freemem', 'freeswap']
@@ -92,7 +109,8 @@ elif args.dataset=="cpu_small":
 
 
 
-if args.modelname=="tabkanet" :
+
+if args.modelname=="tabkanet" or args.modelname=="tabmlpnet"   :
     all_count=len(continuous_features)+len(categorical_features)
     if all_count<=10:
         mlp_hidden_dims = [32]
@@ -104,17 +122,21 @@ if args.modelname=="tabkanet" :
 
 
 
-
-
-
-
 def train_model():
-    train_data = pd.read_csv('/path/templates/'+key+'/Fold'+fold+'/train.csv').fillna('0')
-    test_data = pd.read_csv('/path/templates/'+key+'/Fold'+fold+'/test.csv').fillna('0')
-    val_data = pd.read_csv('/path/templates/'+key+'/Fold'+fold+'/val.csv').fillna('0')
+    train_data = pd.read_csv('/data/gaowh/work/24process/tab-transformer/use_tabtransformers/templates/'+key+'/Fold'+fold+'/train.csv').fillna('0')
+
+    test_data = pd.read_csv('/data/gaowh/work/24process/tab-transformer/use_tabtransformers/templates/'+key+'/Fold'+fold+'/test.csv').fillna('0')
+
+    val_data = pd.read_csv('/data/gaowh/work/24process/tab-transformer/use_tabtransformers/templates/'+key+'/Fold'+fold+'/val.csv').fillna('0')
 
 
-
+    if args.modelname=="FeatureTokenizerTransformer":
+        for feature in continuous_features:
+            mean = train_data[feature].mean()
+            std = train_data[feature].std()
+            train_data[feature] = (train_data[feature] - mean) / std
+            test_data[feature] = (test_data[feature] - mean) / std
+            val_data[feature] = (val_data[feature] - mean) / std
 
     train_dataset, test_dataset, val_dataset = \
         get_dataset(
@@ -156,13 +178,63 @@ def train_model():
     for column in combined_vocabulary:
         unique_values = sorted(str(value) for value in combined_vocabulary[column].keys())
         final_vocabulary[column] = {value: i for i, value in enumerate(unique_values)}
-    model = model_object(
-        output_dim=output_dim, 
-        vocabulary=final_vocabulary,
-        num_continuous_features=len(continuous_features), 
-        embedding_dim=embedding_dim, nhead=nhead, num_layers=num_layers, dim_feedforward=dim_feedforward, attn_dropout_rate=attn_dropout_rate,
-        mlp_hidden_dims=mlp_hidden_dims, activation=activation, ffn_dropout_rate=ffn_dropout_rate
-        )
+
+
+    def get_quantile_bins(x_cont, n_bins=2):
+
+        # 确保输入数据是二维的
+        if x_cont.ndim != 2:
+            raise ValueError("x_cont must be a 2D tensor")
+        
+        # 获取特征数量
+        feature_dim = x_cont.shape[1]
+        
+        # 初始化边界列表
+        bins = torch.zeros(feature_dim, n_bins + 1, device=x_cont.device)
+        
+        # 计算每个特征的分位数
+        for i in range(feature_dim):
+            # 计算分位数，返回值是升序排列的
+            quantiles = torch.quantile(x_cont[:, i], torch.linspace(0, 1, n_bins + 1, device=x_cont.device), dim=0)
+            bins[i] = quantiles
+        
+        return bins
+
+
+
+
+    if args.modelname=="tabkanet"  or args.modelname=="tabmlpnet"  :
+
+        device = torch.device("cuda:"+str(args.gpunum) if torch.cuda.is_available() else "cpu")
+
+        data_numpy = {
+            'train': {'x_cont': train_dataset.continuous_data},
+        }
+        data = {
+            part: {k: torch.as_tensor(v, device=device).float() for k, v in data_numpy[part].items()}
+            for part in data_numpy
+        }
+
+
+        bins = get_quantile_bins(data['train']['x_cont'], n_bins=4)
+
+
+
+
+        model = model_object(
+            output_dim=output_dim, 
+            vocabulary=final_vocabulary,
+            num_continuous_features=len(continuous_features), 
+            embedding_dim=embedding_dim, nhead=nhead, num_layers=num_layers, dim_feedforward=dim_feedforward, attn_dropout_rate=attn_dropout_rate,
+            mlp_hidden_dims=mlp_hidden_dims, activation=activation, ffn_dropout_rate=ffn_dropout_rate,learninable_noise=learninable_noise,bins=bins)
+    else:
+
+        model = model_object(
+            output_dim=output_dim, 
+            vocabulary=final_vocabulary,
+            num_continuous_features=len(continuous_features), 
+            embedding_dim=embedding_dim, nhead=nhead, num_layers=num_layers, dim_feedforward=dim_feedforward, attn_dropout_rate=attn_dropout_rate,
+            mlp_hidden_dims=mlp_hidden_dims, activation=activation, ffn_dropout_rate=ffn_dropout_rate)
 
     optimizer = torch.optim.SGD(model.parameters(), lr=0.0001, momentum=0.9)
 
