@@ -5,19 +5,23 @@ Os dados tabulares são amplamente utilizados em diversas áreas, mas redes neur
 Principais destaques do modelo:
 
 ✅ Módulo de Embedding Numérico baseado em KAN: melhora a representação de features numéricas.
+
 ✅ Arquitetura baseada em Transformer: permite capturar relações complexas nos dados.
+
 ✅ Facilidade de implementação e estabilidade: desempenho validado em diversos benchmarks públicos.
 
-O modelo foi testado em bases públicas e demonstrou desempenho competitivo!
 
+O modelo foi testado em bases públicas e demonstrou desempenho competitivo!
 Caso tenham alguma dúvida para executar esse script com a base de dados do projeto, podem consultar, principalmente, as duas fontes abaixo:
 
 🔗 [Link para o artigo](https://arxiv.org/abs/2409.08806)
+
 🔗 [Link para o código-fonte original](https://github.com/AI-thpremed/TabKANet/tree/main?tab=readme-ov-file#reference)
 
 ## 📂 Estrutura do Projeto
 
 📁 Model: A pasta TabKANet contém todos os arquivos relacionados ao modelo.
+
 📁 train_tutorial: Notebook Jupyter com um exemplo de treinamento para um dataset público. A estrutura pode ser facilmente adaptada para outros conjuntos de dados!
 
 ## 📦 Dependências
