@@ -14,6 +14,7 @@ setuptools.setup(
     packages=setuptools.find_packages(),
     install_requires=[
     'torch>=2.3',
+    'einops>=0.8',
     'pandas>=2.0'
   ],
     classifiers=[
